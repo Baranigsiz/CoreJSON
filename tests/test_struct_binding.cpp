@@ -93,4 +93,40 @@ TEST_CASE("Struct Binding - Intrusive Private Fields (SENKO_BIND_INTRUSIVE)") {
     CHECK_EQ(restored.get_clearance(), 9);
 }
 
+namespace geometry {
+struct Vector3 {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+inline void to_json(senko::json& j, const Vector3& v) {
+    j = senko::json::array({v.x, v.y, v.z});
+}
+
+inline void from_json(const senko::json& j, Vector3& v) {
+    if (!j.is_array() || j.size() < 3) {
+        throw senko::type_error("Expected 3-element array for Vector3");
+    }
+    v.x = j[0].get<double>();
+    v.y = j[1].get<double>();
+    v.z = j[2].get<double>();
+}
+} // namespace geometry
+
+TEST_CASE("Struct Binding - Non-Intrusive ADL to_json / from_json") {
+    geometry::Vector3 vec{1.5, 2.5, 3.5};
+    json j = vec;
+    CHECK(j.is_array());
+    CHECK_EQ(j.size(), 3);
+    CHECK_EQ(j[0].get<double>(), 1.5);
+    CHECK_EQ(j[1].get<double>(), 2.5);
+    CHECK_EQ(j[2].get<double>(), 3.5);
+
+    geometry::Vector3 restored = j.get<geometry::Vector3>();
+    CHECK_EQ(restored.x, 1.5);
+    CHECK_EQ(restored.y, 2.5);
+    CHECK_EQ(restored.z, 3.5);
+}
+
 

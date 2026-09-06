@@ -199,6 +199,9 @@ public:
     bool is_number_integer() const noexcept { return std::holds_alternative<int64_t>(m_data); }
     bool is_number_unsigned() const noexcept { return std::holds_alternative<uint64_t>(m_data); }
     bool is_number_float() const noexcept { return std::holds_alternative<double>(m_data); }
+    bool is_integer() const noexcept { return is_number_integer() || is_number_unsigned(); }
+    bool is_unsigned() const noexcept { return is_number_unsigned(); }
+    bool is_float() const noexcept { return is_number_float(); }
     bool is_number() const noexcept {
         return is_number_integer() || is_number_unsigned() || is_number_float();
     }
@@ -636,6 +639,7 @@ public:
     const value& at_ptr(const json_pointer& ptr) const;
     value& operator[](const json_pointer& ptr);
     const value& operator[](const json_pointer& ptr) const;
+    bool contains(const json_pointer& ptr) const noexcept;
 
     template <typename T>
     T value_or(const json_pointer& ptr, const T& default_val) const {

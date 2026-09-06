@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <utility>
 #include <type_traits>
+#include <filesystem>
+#include <chrono>
 
 namespace senko {
 
@@ -234,6 +236,48 @@ struct adl_serializer<std::unordered_map<std::string, T>> {
         const auto& obj = j.get_ref_object();
         for (const auto& [k, v] : obj) {
             m[k] = v.template get<T>();
+        }
+    }
+};
+
+// ==========================================
+// std::filesystem::path Adapter
+// ==========================================
+template <>
+struct adl_serializer<std::filesystem::path> {
+    static void serialize(value& j, const std::filesystem::path& p) {
+        j = p.string();
+    }
+
+    static void deserialize(const value& j, std::filesystem::path& p) {
+        if (!j.is_string()) {
+            throw type_error("Expected string for std::filesystem::path, got " + std::string(j.type_name()));
+        }
+        p = std::filesystem::path(j.get<std::string>());
+    }
+};
+
+// ==========================================
+// std::chrono::duration Adapter
+// ==========================================
+template <typename Rep, typename Period>
+struct adl_serializer<std::chrono::duration<Rep, Period>> {
+    using duration_t = std::chrono::duration<Rep, Period>;
+
+    static void serialize(value& j, const duration_t& d) {
+        j = static_cast<int64_t>(d.count());
+    }
+
+    static void deserialize(const value& j, duration_t& d) {
+        if (!j.is_number()) {
+            throw type_error("Expected number for std::chrono::duration, got " + std::string(j.type_name()));
+        }
+        if (j.is_integer()) {
+            d = duration_t(static_cast<Rep>(j.get<int64_t>()));
+        } else if (j.is_unsigned()) {
+            d = duration_t(static_cast<Rep>(j.get<uint64_t>()));
+        } else {
+            d = duration_t(static_cast<Rep>(j.get<double>()));
         }
     }
 };

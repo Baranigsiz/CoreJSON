@@ -119,4 +119,73 @@ TEST_CASE("JSON Pointer - Flatten and Unflatten") {
     CHECK_THROWS(bad_flat2.unflatten());
 }
 
+TEST_CASE("JSON Pointer - Operators, Hierarchy & std::hash") {
+    senko::json_pointer root;
+    CHECK(root.empty());
+    CHECK_THROWS(root.parent_pointer());
+    CHECK_THROWS(root.back());
+
+    // Operator / and /=
+    auto p1 = "/users"_json_pointer / 0 / "profile";
+    CHECK_EQ(p1.to_string(), "/users/0/profile");
+    CHECK_EQ(p1.back(), "profile");
+
+    auto parent = p1.parent_pointer();
+    CHECK_EQ(parent.to_string(), "/users/0");
+    CHECK_EQ(parent.back(), "0");
+
+    auto grandparent = parent.parent_pointer();
+    CHECK_EQ(grandparent.to_string(), "/users");
+
+    senko::json_pointer mut = "/api"_json_pointer;
+    mut /= "v1";
+    mut /= 2;
+    CHECK_EQ(mut.to_string(), "/api/v1/2");
+
+    // Equality, inequality & ordering
+    senko::json_pointer ptr_a("/a/b");
+    senko::json_pointer ptr_b("/a/b");
+    senko::json_pointer ptr_c("/a/c");
+    CHECK(ptr_a == ptr_b);
+    CHECK(ptr_a != ptr_c);
+    CHECK(ptr_a < ptr_c);
+
+    // std::unordered_set<senko::json_pointer>
+    std::unordered_set<senko::json_pointer> ptr_set;
+    ptr_set.insert(ptr_a);
+    ptr_set.insert(ptr_c);
+    CHECK_EQ(ptr_set.size(), 2);
+    CHECK_EQ(ptr_set.count(ptr_b), 1);
+}
+
+TEST_CASE("JSON Pointer - doc.contains(json_pointer)") {
+    json doc = {
+        {"user", {
+            {"name", "Baran"},
+            {"tags", {"c++", "performance"}},
+            {"nested", {
+                {"active", true}
+            }}
+        }}
+    };
+
+    // Existing paths
+    CHECK(doc.contains(""_json_pointer));
+    CHECK(doc.contains("/user"_json_pointer));
+    CHECK(doc.contains("/user/name"_json_pointer));
+    CHECK(doc.contains("/user/tags"_json_pointer));
+    CHECK(doc.contains("/user/tags/0"_json_pointer));
+    CHECK(doc.contains("/user/tags/1"_json_pointer));
+    CHECK(doc.contains("/user/nested/active"_json_pointer));
+
+    // Non-existing paths
+    CHECK(!doc.contains("/missing"_json_pointer));
+    CHECK(!doc.contains("/user/missing"_json_pointer));
+    CHECK(!doc.contains("/user/tags/2"_json_pointer));      // Out of bounds
+    CHECK(!doc.contains("/user/tags/99999"_json_pointer));  // Far out of bounds
+    CHECK(!doc.contains("/user/tags/bad_idx"_json_pointer));// String on array
+    CHECK(!doc.contains("/user/name/sub"_json_pointer));    // Navigating primitive
+    CHECK(!doc.contains("/user/tags/-"_json_pointer));      // '-' token
+}
+
 

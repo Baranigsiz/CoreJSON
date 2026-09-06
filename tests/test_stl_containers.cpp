@@ -136,4 +136,38 @@ TEST_CASE("STL - std::hash & std::unordered_set / unordered_map") {
     CHECK_EQ(order_set.count(obj_b), 1);
 }
 
+TEST_CASE("STL - std::filesystem::path Serialization & Deserialization") {
+    std::filesystem::path p = "C:/projects/senko/config.json";
+    json j = p;
+    CHECK(j.is_string());
+    CHECK_EQ(j.get<std::string>(), p.string());
+
+    std::filesystem::path restored = j.get<std::filesystem::path>();
+    CHECK_EQ(restored, p);
+
+    // Deserializing non-string throws type_error
+    json not_str = 12345;
+    CHECK_THROWS(not_str.get<std::filesystem::path>());
+}
+
+TEST_CASE("STL - std::chrono::duration Serialization & Deserialization") {
+    auto millis = std::chrono::milliseconds(350);
+    json j_ms = millis;
+    CHECK(j_ms.is_integer());
+    CHECK_EQ(j_ms.get<int64_t>(), 350);
+
+    auto restored_ms = j_ms.get<std::chrono::milliseconds>();
+    CHECK_EQ(restored_ms.count(), 350);
+
+    auto secs = std::chrono::seconds(60);
+    json j_s = secs;
+    CHECK_EQ(j_s.get<int64_t>(), 60);
+    auto restored_s = j_s.get<std::chrono::seconds>();
+    CHECK_EQ(restored_s.count(), 60);
+
+    // Non-number throws type_error
+    json not_num = "invalid";
+    CHECK_THROWS(not_num.get<std::chrono::milliseconds>());
+}
+
 

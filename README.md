@@ -49,8 +49,8 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 - **🔄 RFC 6902 Patch & RFC 7396 Merge Patch:** Calculate deltas with `json::diff(a, b)`, apply RFC 6902 patches, and merge updates with `doc.merge_patch(patch)`.
 - **📦 Universal Binary JSON (MessagePack & CBOR):** Serialize and deserialize directly to/from binary buffers (`to_msgpack`, `from_msgpack`, `to_cbor`, `from_cbor`) for 20-50% smaller payloads and wire speed.
 - **🔍 RFC 9535 JSONPath Engine:** SQL-like querying with wildcards (`[*]`), recursive descent (`$..key`, `$..*`), array slices (`[0:3]`, `[::2]`), and conditional filters (`[?(@.price < 10)]`). Supports **Zero-Copy querying** (`jsonpath_refs`) and **in-place DOM mutation** via non-owning pointers (`value*`).
-- **🎯 RFC 6901 JSON Pointer & Flattening:** Query deep structures with `/store/book/0/author`, `doc.flatten()` and `doc.unflatten()` with bound protection.
-- **🧬 Struct Reflection & STL Adapters:** Serialize and deserialize structs with up to 32 fields (`SENKO_BIND`, `SENKO_BIND_INTRUSIVE`), `std::optional`, `std::map`, `std::vector`, `std::pair`, and order-independent `std::unordered_set<json>` out-of-the-box.
+- **🎯 RFC 6901 JSON Pointer & Operator Chaining:** Navigate and test deep structures with `/store/book/0/author`, `doc.contains(ptr)`, `ptr / "key" / 0`, `ptr.parent_pointer()`, `doc.flatten()`, and `doc.unflatten()` with bound protection.
+- **🧬 Struct Reflection & Modern STL Adapters:** Serialize and deserialize structs (`SENKO_BIND`), non-intrusive ADL `to_json`/`from_json`, `std::optional`, `std::filesystem::path`, `std::chrono::duration`, `std::map`, `std::vector`, `std::pair`, and order-independent `std::unordered_set<json>` and `std::unordered_set<json_pointer>` out-of-the-box.
 - **⚡ SIMD Accelerated Scanning:** Hardware-accelerated 16-byte vector chunk scanning with SSE2 on x86/x64 and **NEON on ARM64** (Apple Silicon, AWS Graviton, Raspberry Pi, Android, Windows on ARM) for lightning-fast string parsing.
 - **🛠️ First-Class JSONC Engine:** Native support for C/C++ style comments (`//`, `/* */`) and trailing commas via `senko::jsonc::parse("config.jsonc")` and `""_jsonc`.
 - **🌊 NDJSON / JSON Lines (JSONL) Stream:** Zero-allocation line-by-line streaming engine (`senko::jsonl_reader`) tailored for Big Data, logs, and AI/LLM datasets.
@@ -77,7 +77,7 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 | **Element Access** | `operator[]`, `at()`, `find()`, `get<T>()`, `value_or(key, default)` | `int x = j["count"].get<int>();`, `std::string s = j.value_or("k", "fallback");` |
 | **Iterators & Views** | `begin()`, `end()`, `items()` (Structured Binding) | `for (auto& [k, v] : j.items()) { ... }` |
 | **Modifiers** | `push_back()`, `contains()`, `erase()`, `clear()`, `size()`, `empty()` | `j.push_back(42);`, `if (j.contains("key")) { ... }` |
-| **JSON Pointer (RFC 6901)** | `at_ptr()`, `operator[]`, `value_or(ptr, default)`, `flatten()`, `unflatten()` | `j["/user/name"_json_pointer]`, `json flat = j.flatten();` |
+| **JSON Pointer (RFC 6901)** | `at_ptr()`, `operator[]`, `contains(ptr)`, `ptr / token`, `parent_pointer()`, `value_or()`, `flatten()`, `unflatten()` | `if (j.contains("/user/0"_json_pointer)) { ... }`, `auto p = "/api"_json_pointer / "v1";` |
 | **JSONPath (RFC 9535)** | `jsonpath()`, `jsonpath_refs()`, `jsonpath_first_ref()` | `auto res = j.jsonpath_refs("$.store.books[*]");` |
 | **JSON Patch (RFC 6902)** | `patch()`, `patch_in_place()`, `json::diff(src, tgt)` | `json patch = json::diff(a, b); a.patch_in_place(patch);` |
 | **JSON Merge Patch (RFC 7396)** | `merge_patch()`, `merge_patch_in_place()` | `j.merge_patch_in_place(delta_patch);` |
@@ -569,8 +569,14 @@ int main() {
     unique_records.insert(senko::json::object({{"a", 1}, {"b", 2}}));
 
     // Will match even with different key insertion order:
-    bool found = unique_records.count(senko::json::object({{"b", 2}, {"a", 1}})) == 1; // true!
-    (void)found;
+    // std::filesystem::path and std::chrono::duration support:
+    senko::json app_config;
+    app_config["log_path"] = std::filesystem::path("C:/logs/app.log");
+    app_config["timeout"] = std::chrono::milliseconds(500);
+
+    auto path = app_config["log_path"].get<std::filesystem::path>();
+    auto timeout = app_config["timeout"].get<std::chrono::milliseconds>();
+    (void)path; (void)timeout;
 
     return 0;
 }
@@ -667,7 +673,7 @@ SenkoJSON/
 ├── single_include/senko/          # Standalone single-header distribution (~120 KB)
 │   └── senko.hpp
 ├── examples/                      # Interactive code examples (01 - 12)
-├── tests/                         # Comprehensive unit test suite (70 test cases, 453 checks, 100% pass rate)
+├── tests/                         # Comprehensive unit test suite (75 test cases, 499 checks, 100% pass rate)
 ├── benchmarks/                    # Latency & throughput benchmark suite
 ├── scripts/amalgamate.py          # Header amalgamation script
 ├── CMakeLists.txt                 # Modern CMake build system

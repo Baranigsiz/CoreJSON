@@ -385,6 +385,9 @@ public:
     bool is_number_integer() const noexcept { return std::holds_alternative<int64_t>(m_data); }
     bool is_number_unsigned() const noexcept { return std::holds_alternative<uint64_t>(m_data); }
     bool is_number_float() const noexcept { return std::holds_alternative<double>(m_data); }
+    bool is_integer() const noexcept { return is_number_integer() || is_number_unsigned(); }
+    bool is_unsigned() const noexcept { return is_number_unsigned(); }
+    bool is_float() const noexcept { return is_number_float(); }
     bool is_number() const noexcept {
         return is_number_integer() || is_number_unsigned() || is_number_float();
     }
@@ -822,6 +825,7 @@ public:
     const value& at_ptr(const json_pointer& ptr) const;
     value& operator[](const json_pointer& ptr);
     const value& operator[](const json_pointer& ptr) const;
+    bool contains(const json_pointer& ptr) const noexcept;
 
     template <typename T>
     T value_or(const json_pointer& ptr, const T& default_val) const {
@@ -906,6 +910,8 @@ struct adl_serializer {
 #include <unordered_map>
 #include <utility>
 #include <type_traits>
+#include <filesystem>
+#include <chrono>
 
 namespace senko {
 
@@ -1127,6 +1133,48 @@ struct adl_serializer<std::unordered_map<std::string, T>> {
         const auto& obj = j.get_ref_object();
         for (const auto& [k, v] : obj) {
             m[k] = v.template get<T>();
+        }
+    }
+};
+
+// ==========================================
+// std::filesystem::path Adapter
+// ==========================================
+template <>
+struct adl_serializer<std::filesystem::path> {
+    static void serialize(value& j, const std::filesystem::path& p) {
+        j = p.string();
+    }
+
+    static void deserialize(const value& j, std::filesystem::path& p) {
+        if (!j.is_string()) {
+            throw type_error("Expected string for std::filesystem::path, got " + std::string(j.type_name()));
+        }
+        p = std::filesystem::path(j.get<std::string>());
+    }
+};
+
+// ==========================================
+// std::chrono::duration Adapter
+// ==========================================
+template <typename Rep, typename Period>
+struct adl_serializer<std::chrono::duration<Rep, Period>> {
+    using duration_t = std::chrono::duration<Rep, Period>;
+
+    static void serialize(value& j, const duration_t& d) {
+        j = static_cast<int64_t>(d.count());
+    }
+
+    static void deserialize(const value& j, duration_t& d) {
+        if (!j.is_number()) {
+            throw type_error("Expected number for std::chrono::duration, got " + std::string(j.type_name()));
+        }
+        if (j.is_integer()) {
+            d = duration_t(static_cast<Rep>(j.get<int64_t>()));
+        } else if (j.is_unsigned()) {
+            d = duration_t(static_cast<Rep>(j.get<uint64_t>()));
+        } else {
+            d = duration_t(static_cast<Rep>(j.get<double>()));
         }
     }
 };
@@ -2505,6 +2553,81 @@ public:
         if (!m_tokens.empty()) m_tokens.pop_back();
     }
 
+    json_pointer parent_pointer() const {
+        if (empty()) {
+            throw pointer_error("Cannot get parent_pointer() of root pointer");
+        }
+        json_pointer res = *this;
+        res.pop_back();
+        return res;
+    }
+
+    const std::string& back() const {
+        if (empty()) {
+            throw pointer_error("Cannot call back() on empty JSON Pointer");
+        }
+        return m_tokens.back();
+    }
+
+    json_pointer operator/(std::string_view token) const {
+        json_pointer res = *this;
+        res.push_back(std::string(token));
+        return res;
+    }
+
+    json_pointer operator/(size_t index) const {
+        json_pointer res = *this;
+        res.push_back(std::to_string(index));
+        return res;
+    }
+
+    json_pointer& operator/=(std::string_view token) {
+        push_back(std::string(token));
+        return *this;
+    }
+
+    json_pointer& operator/=(size_t index) {
+        push_back(std::to_string(index));
+        return *this;
+    }
+
+    bool operator==(const json_pointer& other) const noexcept {
+        return m_tokens == other.m_tokens;
+    }
+
+    bool operator!=(const json_pointer& other) const noexcept {
+        return m_tokens != other.m_tokens;
+    }
+
+    bool operator<(const json_pointer& other) const noexcept {
+        return m_tokens < other.m_tokens;
+    }
+
+    bool contains(const value& root) const noexcept {
+        const value* cur = &root;
+        for (const auto& token : m_tokens) {
+            if (cur->is_object()) {
+                const auto* ptr = cur->find(token);
+                if (!ptr) return false;
+                cur = ptr;
+            } else if (cur->is_array()) {
+                if (token.empty() || token == "-") return false;
+                if (token.size() > 1 && token[0] == '0') return false;
+                size_t idx = 0;
+                for (char c : token) {
+                    if (c < '0' || c > '9') return false;
+                    if (idx > (std::numeric_limits<size_t>::max() - (c - '0')) / 10) return false;
+                    idx = idx * 10 + (c - '0');
+                }
+                if (idx >= cur->size()) return false;
+                cur = &(*cur)[idx];
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static size_t parse_array_index(const std::string& token) {
         if (token.empty()) {
             throw pointer_error("Empty array index in JSON Pointer");
@@ -2614,6 +2737,10 @@ inline value& value::operator[](const json_pointer& ptr) {
 
 inline const value& value::operator[](const json_pointer& ptr) const {
     return ptr.resolve(*this);
+}
+
+inline bool value::contains(const json_pointer& ptr) const noexcept {
+    return ptr.contains(*this);
 }
 
 namespace detail {
@@ -2737,6 +2864,19 @@ inline value value::unflatten() const {
 }
 
 } // namespace senko
+
+namespace std {
+template <>
+struct hash<senko::json_pointer> {
+    size_t operator()(const senko::json_pointer& ptr) const noexcept {
+        size_t h = 0;
+        for (const auto& tok : ptr.tokens()) {
+            h ^= std::hash<std::string>{}(tok) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        }
+        return h;
+    }
+};
+} // namespace std
 
 
 // ========================================================
