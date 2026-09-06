@@ -226,6 +226,11 @@ public:
     // ==========================================
 
     value() noexcept : m_data(nullptr) {}
+    value(const value&) = default;
+    value(value&&) noexcept = default;
+    value& operator=(const value&) = default;
+    value& operator=(value&&) noexcept = default;
+
     value(std::nullptr_t) noexcept : m_data(nullptr) {}
     value(bool b) noexcept : m_data(b) {}
 
@@ -797,10 +802,13 @@ public:
                 break;
             }
             case value_t::object: {
+                size_t obj_acc = 0;
                 for (const auto& [k, v] : get_ref_object()) {
-                    h ^= std::hash<std::string>{}(k) + 0x9e3779b9 + (h << 6) + (h >> 2);
-                    h ^= v.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+                    size_t item_h = std::hash<std::string>{}(k);
+                    item_h ^= v.hash() + 0x9e3779b9 + (item_h << 6) + (item_h >> 2);
+                    obj_acc += item_h;
                 }
+                h ^= obj_acc + 0x9e3779b9 + (h << 6) + (h >> 2);
                 break;
             }
         }
@@ -828,6 +836,10 @@ public:
     // JSONPath support declarations
     std::vector<value> jsonpath(std::string_view query) const;
     value jsonpath_first(std::string_view query) const;
+    std::vector<const value*> jsonpath_refs(std::string_view query) const;
+    std::vector<value*> jsonpath_refs(std::string_view query);
+    const value* jsonpath_first_ref(std::string_view query) const;
+    value* jsonpath_first_ref(std::string_view query);
 
     // JSON Patch (RFC 6902) & Diff declarations
     value patch(const value& patch_doc) const;
@@ -1145,6 +1157,12 @@ struct adl_serializer<std::unordered_map<std::string, T>> {
     #if defined(_MSC_VER)
         #include <intrin.h>
     #endif
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(_M_ARM64) || defined(_M_ARM)
+    #define SENKO_HAS_NEON 1
+    #include <arm_neon.h>
+    #if defined(_MSC_VER)
+        #include <intrin.h>
+    #endif
 #endif
 
 namespace senko {
@@ -1195,6 +1213,61 @@ inline size_t find_non_plain_sse2(const char* ptr, size_t len) noexcept {
             return i + static_cast<size_t>(__builtin_ctz(mask));
 #endif
         }
+    }
+    return i;
+}
+#endif
+#if defined(SENKO_HAS_NEON)
+inline size_t find_non_plain_neon(const char* ptr, size_t len) noexcept {
+    size_t i = 0;
+    const uint8x16_t quote_vec = vdupq_n_u8(static_cast<uint8_t>('"'));
+    const uint8x16_t bslash_vec = vdupq_n_u8(static_cast<uint8_t>('\\'));
+    const uint8x16_t space_vec = vdupq_n_u8(0x20);
+
+    for (; i + 16 <= len; i += 16) {
+        uint8x16_t chunk = vld1q_u8(reinterpret_cast<const uint8_t*>(ptr + i));
+        uint8x16_t is_quote = vceqq_u8(chunk, quote_vec);
+        uint8x16_t is_bslash = vceqq_u8(chunk, bslash_vec);
+        uint8x16_t is_ctrl = vcltq_u8(chunk, space_vec); // char < 0x20
+
+        uint8x16_t matches = vorrq_u8(vorrq_u8(is_quote, is_bslash), is_ctrl);
+
+#if (defined(__aarch64__) || defined(_M_ARM64)) && (!defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__)
+        if (vmaxvq_u8(matches) != 0) {
+            uint64_t low = vgetq_lane_u64(vreinterpretq_u64_u8(matches), 0);
+            if (low != 0) {
+#if defined(_MSC_VER) && !defined(__clang__)
+                unsigned long idx;
+                _BitScanForward64(&idx, low);
+                return i + (idx >> 3);
+#else
+                return i + (static_cast<size_t>(__builtin_ctzll(low)) >> 3);
+#endif
+            }
+            uint64_t high = vgetq_lane_u64(vreinterpretq_u64_u8(matches), 1);
+            if (high != 0) {
+#if defined(_MSC_VER) && !defined(__clang__)
+                unsigned long idx;
+                _BitScanForward64(&idx, high);
+                return i + 8 + (idx >> 3);
+#else
+                return i + 8 + (static_cast<size_t>(__builtin_ctzll(high)) >> 3);
+#endif
+            }
+        }
+#else
+        uint8x8_t narrow = vpmax_u8(vget_low_u8(matches), vget_high_u8(matches));
+        narrow = vpmax_u8(narrow, narrow);
+        narrow = vpmax_u8(narrow, narrow);
+        if (vget_lane_u8(narrow, 0) != 0) {
+            for (size_t k = 0; k < 16; ++k) {
+                unsigned char c = static_cast<unsigned char>(ptr[i + k]);
+                if (c == '"' || c == '\\' || c < 0x20) {
+                    return i + k;
+                }
+            }
+        }
+#endif
     }
     return i;
 }
@@ -1357,6 +1430,15 @@ public:
 #if defined(SENKO_HAS_SSE2)
             if (m_pos + 16 <= m_src.size()) {
                 size_t advanced = detail::find_non_plain_sse2(m_src.data() + m_pos, m_src.size() - m_pos);
+                if (advanced > 0) {
+                    m_pos += advanced;
+                    m_col += advanced;
+                    if (m_pos >= m_src.size()) break;
+                }
+            }
+#elif defined(SENKO_HAS_NEON)
+            if (m_pos + 16 <= m_src.size()) {
+                size_t advanced = detail::find_non_plain_neon(m_src.data() + m_pos, m_src.size() - m_pos);
                 if (advanced > 0) {
                     m_pos += advanced;
                     m_col += advanced;
@@ -1636,7 +1718,7 @@ namespace senko {
 
 class parser {
 public:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 128;
 
     explicit parser(std::string_view src, bool allow_comments = false, bool allow_trailing_comma = false)
         : m_lexer(src, allow_comments), m_allow_trailing_comma(allow_trailing_comma) {}
@@ -1913,10 +1995,15 @@ struct stream_writer {
 template <typename Writer>
 class basic_serializer {
 public:
+    static constexpr size_t max_depth = 128;
+
     explicit basic_serializer(Writer& out, int indent = -1)
         : m_out(out), m_indent(indent), m_depth(0) {}
 
     void dump(const value& v) {
+        if (static_cast<size_t>(m_depth) > max_depth) {
+            throw serializer_error("Maximum JSON serialization depth exceeded (potential stack overflow)");
+        }
         switch (v.type()) {
             case value_t::null:
                 m_out.append("null", 4);
@@ -2412,7 +2499,10 @@ inline value value::unflatten() const {
                     cur = &(*cur)[tok];
                 }
             } else if (cur->is_array()) {
-                size_t idx = std::stoull(tok);
+                size_t idx = json_pointer::parse_array_index(tok);
+                if (idx > 100000) {
+                    throw pointer_error("Array index in unflatten exceeds maximum allowed limit: " + tok);
+                }
                 if (idx >= cur->size()) {
                     while (cur->size() <= idx) {
                         cur->push_back(value(nullptr));
@@ -2524,36 +2614,54 @@ struct path_segment {
     filter_expr filter;
 };
 
-inline void collect_descendants(const value& current, std::string_view target_key, std::vector<value>& results) {
+template <typename ValueType>
+inline void collect_descendant_refs(ValueType& current, std::string_view target_key, std::vector<ValueType*>& results) {
     if (current.is_object()) {
-        const auto& obj = current.get_ref_object();
-        for (const auto& pair : obj) {
+        auto& obj = current.get_ref_object();
+        for (auto& pair : obj) {
             if (pair.first == target_key) {
-                results.push_back(pair.second);
+                results.push_back(&(pair.second));
             }
-            collect_descendants(pair.second, target_key, results);
+            collect_descendant_refs(pair.second, target_key, results);
         }
     } else if (current.is_array()) {
-        const auto& arr = current.get_ref_array();
-        for (const auto& elem : arr) {
-            collect_descendants(elem, target_key, results);
+        auto& arr = current.get_ref_array();
+        for (auto& elem : arr) {
+            collect_descendant_refs(elem, target_key, results);
         }
     }
 }
 
-inline void collect_all_descendants(const value& current, std::vector<value>& results) {
+template <typename ValueType>
+inline void collect_all_descendant_refs(ValueType& current, std::vector<ValueType*>& results) {
     if (current.is_object()) {
-        const auto& obj = current.get_ref_object();
-        for (const auto& pair : obj) {
-            results.push_back(pair.second);
-            collect_all_descendants(pair.second, results);
+        auto& obj = current.get_ref_object();
+        for (auto& pair : obj) {
+            results.push_back(&(pair.second));
+            collect_all_descendant_refs(pair.second, results);
         }
     } else if (current.is_array()) {
-        const auto& arr = current.get_ref_array();
-        for (const auto& elem : arr) {
-            results.push_back(elem);
-            collect_all_descendants(elem, results);
+        auto& arr = current.get_ref_array();
+        for (auto& elem : arr) {
+            results.push_back(&elem);
+            collect_all_descendant_refs(elem, results);
         }
+    }
+}
+
+inline void collect_descendants(const value& current, std::string_view target_key, std::vector<value>& results) {
+    std::vector<const value*> refs;
+    collect_descendant_refs(current, target_key, refs);
+    for (const auto* r : refs) {
+        if (r) results.push_back(*r);
+    }
+}
+
+inline void collect_all_descendants(const value& current, std::vector<value>& results) {
+    std::vector<const value*> refs;
+    collect_all_descendant_refs(current, refs);
+    for (const auto* r : refs) {
+        if (r) results.push_back(*r);
     }
 }
 
@@ -2772,61 +2880,52 @@ inline std::vector<path_segment> parse_jsonpath(std::string_view expr) {
     return segments;
 }
 
-} // namespace detail
-
-inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view query);
-
-inline std::vector<value> value::jsonpath(std::string_view query) const {
-    return evaluate_jsonpath(*this, query);
-}
-
-inline value value::jsonpath_first(std::string_view query) const {
-    auto results = evaluate_jsonpath(*this, query);
-    if (results.empty()) return value(nullptr);
-    return results[0];
-}
-
-inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view query) {
-    auto segments = detail::parse_jsonpath(query);
-    std::vector<value> current_set = {root};
+template <typename ValueType>
+inline std::vector<ValueType*> evaluate_jsonpath_refs_impl(ValueType& root, std::string_view query) {
+    auto segments = parse_jsonpath(query);
+    std::vector<ValueType*> current_set = {&root};
 
     for (const auto& seg : segments) {
-        std::vector<value> next_set;
+        std::vector<ValueType*> next_set;
 
-        for (const auto& item : current_set) {
+        for (auto* item : current_set) {
+            if (!item) continue;
             switch (seg.type) {
-                case detail::segment_type::root:
+                case segment_type::root:
                     next_set.push_back(item);
                     break;
-                case detail::segment_type::child_key:
-                    if (item.is_object() && item.contains(seg.key)) {
-                        next_set.push_back(item.at(seg.key));
-                    }
-                    break;
-                case detail::segment_type::child_wildcard:
-                    if (item.is_object()) {
-                        for (const auto& pair : item.get_ref_object()) {
-                            next_set.push_back(pair.second);
-                        }
-                    } else if (item.is_array()) {
-                        for (const auto& elem : item.get_ref_array()) {
-                            next_set.push_back(elem);
+                case segment_type::child_key:
+                    if (item->is_object()) {
+                        auto* p = item->find(seg.key);
+                        if (p) {
+                            next_set.push_back(p);
                         }
                     }
                     break;
-                case detail::segment_type::array_index:
-                    if (item.is_array()) {
+                case segment_type::child_wildcard:
+                    if (item->is_object()) {
+                        for (auto& pair : item->get_ref_object()) {
+                            next_set.push_back(&(pair.second));
+                        }
+                    } else if (item->is_array()) {
+                        for (auto& elem : item->get_ref_array()) {
+                            next_set.push_back(&elem);
+                        }
+                    }
+                    break;
+                case segment_type::array_index:
+                    if (item->is_array()) {
                         int idx = seg.index;
-                        const auto& arr = item.get_ref_array();
+                        auto& arr = item->get_ref_array();
                         if (idx < 0) idx += static_cast<int>(arr.size());
                         if (idx >= 0 && static_cast<size_t>(idx) < arr.size()) {
-                            next_set.push_back(arr[static_cast<size_t>(idx)]);
+                            next_set.push_back(&(arr[static_cast<size_t>(idx)]));
                         }
                     }
                     break;
-                case detail::segment_type::array_slice:
-                    if (item.is_array()) {
-                        const auto& arr = item.get_ref_array();
+                case segment_type::array_slice:
+                    if (item->is_array()) {
+                        auto& arr = item->get_ref_array();
                         int n = static_cast<int>(arr.size());
                         int step = seg.slice.step;
                         if (step == 0) throw jsonpath_error("Step cannot be 0 in array slice");
@@ -2843,7 +2942,7 @@ inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view 
                                 e = (std::max)(0, (std::min)(n, e));
                             }
                             for (int idx = s; idx < e; idx += step) {
-                                next_set.push_back(arr[static_cast<size_t>(idx)]);
+                                next_set.push_back(&(arr[static_cast<size_t>(idx)]));
                             }
                         } else {
                             // Negative step
@@ -2858,26 +2957,27 @@ inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view 
                                 e = (std::max)(-1, (std::min)(n - 1, e));
                             }
                             for (int idx = s; idx > e; idx += step) {
-                                next_set.push_back(arr[static_cast<size_t>(idx)]);
+                                next_set.push_back(&(arr[static_cast<size_t>(idx)]));
                             }
                         }
                     }
                     break;
-                case detail::segment_type::descendant_key:
-                    detail::collect_descendants(item, seg.key, next_set);
+                case segment_type::descendant_key:
+                    collect_descendant_refs(*item, seg.key, next_set);
                     break;
-                case detail::segment_type::descendant_wildcard:
-                    detail::collect_all_descendants(item, next_set);
+                case segment_type::descendant_wildcard:
+                    collect_all_descendant_refs(*item, next_set);
                     break;
-                case detail::segment_type::filter:
-                    if (item.is_array()) {
-                        for (const auto& elem : item.get_ref_array()) {
+                case segment_type::filter:
+                    if (item->is_array()) {
+                        auto& arr = item->get_ref_array();
+                        for (auto& elem : arr) {
                             if (seg.filter.evaluate(elem)) {
-                                next_set.push_back(elem);
+                                next_set.push_back(&elem);
                             }
                         }
-                    } else if (item.is_object()) {
-                        if (seg.filter.evaluate(item)) {
+                    } else if (item->is_object()) {
+                        if (seg.filter.evaluate(*item)) {
                             next_set.push_back(item);
                         }
                     }
@@ -2890,6 +2990,64 @@ inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view 
     }
 
     return current_set;
+}
+
+} // namespace detail
+
+// Zero-copy JSONPath evaluation returning non-owning pointers
+inline std::vector<const value*> evaluate_jsonpath_refs(const value& root, std::string_view query) {
+    return detail::evaluate_jsonpath_refs_impl(root, query);
+}
+
+inline std::vector<value*> evaluate_jsonpath_refs(value& root, std::string_view query) {
+    return detail::evaluate_jsonpath_refs_impl(root, query);
+}
+
+inline const value* evaluate_jsonpath_first_ref(const value& root, std::string_view query) {
+    auto results = evaluate_jsonpath_refs(root, query);
+    return results.empty() ? nullptr : results[0];
+}
+
+inline value* evaluate_jsonpath_first_ref(value& root, std::string_view query) {
+    auto results = evaluate_jsonpath_refs(root, query);
+    return results.empty() ? nullptr : results[0];
+}
+
+// Deep-copy JSONPath evaluation (built on top of zero-copy engine)
+inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view query) {
+    auto refs = evaluate_jsonpath_refs(root, query);
+    std::vector<value> results;
+    results.reserve(refs.size());
+    for (const auto* r : refs) {
+        if (r) results.push_back(*r);
+    }
+    return results;
+}
+
+inline std::vector<value> value::jsonpath(std::string_view query) const {
+    return evaluate_jsonpath(*this, query);
+}
+
+inline value value::jsonpath_first(std::string_view query) const {
+    const auto* r = jsonpath_first_ref(query);
+    if (!r) return value(nullptr);
+    return *r;
+}
+
+inline std::vector<const value*> value::jsonpath_refs(std::string_view query) const {
+    return evaluate_jsonpath_refs(*this, query);
+}
+
+inline std::vector<value*> value::jsonpath_refs(std::string_view query) {
+    return evaluate_jsonpath_refs(*this, query);
+}
+
+inline const value* value::jsonpath_first_ref(std::string_view query) const {
+    return evaluate_jsonpath_first_ref(*this, query);
+}
+
+inline value* value::jsonpath_first_ref(std::string_view query) {
+    return evaluate_jsonpath_first_ref(*this, query);
 }
 
 } // namespace senko
@@ -3438,7 +3596,7 @@ inline void serialize_msgpack_impl(const value& v, std::vector<uint8_t>& out) {
 
 class msgpack_reader {
 public:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 128;
 
     msgpack_reader(const uint8_t* data, size_t size)
         : m_data(data), m_size(size), m_pos(0), m_depth(0) {}
@@ -3820,7 +3978,7 @@ inline void serialize_cbor_impl(const value& v, std::vector<uint8_t>& out) {
 
 class cbor_reader {
 public:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 128;
 
     cbor_reader(const uint8_t* data, size_t size)
         : m_data(data), m_size(size), m_pos(0), m_depth(0) {}
@@ -4160,6 +4318,7 @@ namespace senko {
 #include <sstream>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 
 namespace senko {
 
@@ -4202,8 +4361,26 @@ inline size_t count_utf8_codepoints(std::string_view s) noexcept {
 class schema {
 public:
     schema() = default;
-
     explicit schema(value schema_doc) : m_schema(std::move(schema_doc)) {}
+
+    schema(const schema& other) : m_schema(other.m_schema) {}
+    schema(schema&& other) noexcept : m_schema(std::move(other.m_schema)) {}
+    schema& operator=(const schema& other) {
+        if (this != &other) {
+            std::lock_guard<std::mutex> lock(m_regex_mutex);
+            m_schema = other.m_schema;
+            m_regex_cache.clear();
+        }
+        return *this;
+    }
+    schema& operator=(schema&& other) noexcept {
+        if (this != &other) {
+            std::lock_guard<std::mutex> lock(m_regex_mutex);
+            m_schema = std::move(other.m_schema);
+            m_regex_cache.clear();
+        }
+        return *this;
+    }
 
     static schema from_json(const value& doc) {
         return schema(doc);
@@ -4231,11 +4408,13 @@ public:
     }
 
 private:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 64;
     value m_schema;
+    mutable std::mutex m_regex_mutex;
     mutable std::unordered_map<std::string, std::shared_ptr<std::regex>> m_regex_cache;
 
     const std::regex* get_cached_regex(const std::string& pat) const {
+        std::lock_guard<std::mutex> lock(m_regex_mutex);
         auto it = m_regex_cache.find(pat);
         if (it != m_regex_cache.end()) {
             return it->second.get();
@@ -4632,12 +4811,15 @@ struct default_sax_handler {
 template <typename Handler>
 class sax_parser {
 public:
+    static constexpr size_t max_depth = 128;
+
     explicit sax_parser(Handler& handler, bool allow_comments = false, bool allow_trailing_comma = false)
-        : m_handler(handler), m_allow_comments(allow_comments), m_allow_trailing_comma(allow_trailing_comma) {}
+        : m_handler(handler), m_allow_comments(allow_comments), m_allow_trailing_comma(allow_trailing_comma), m_depth(0) {}
 
     bool parse(std::string_view source) {
         lexer lex(source, m_allow_comments);
         try {
+            m_depth = 0;
             if (!parse_value(lex)) return false;
             lex.skip_whitespace_and_comments();
             if (lex.has_more()) {
@@ -4654,8 +4836,18 @@ private:
     Handler& m_handler;
     bool m_allow_comments;
     bool m_allow_trailing_comma;
+    size_t m_depth = 0;
+
+    struct depth_guard {
+        size_t& d;
+        explicit depth_guard(size_t& depth) : d(depth) { d++; }
+        ~depth_guard() { d--; }
+    };
 
     bool parse_value(lexer& lex) {
+        if (m_depth > max_depth) {
+            lex.throw_parse_error("Maximum JSON nesting depth exceeded in SAX parser");
+        }
         lex.skip_whitespace_and_comments();
         if (!lex.has_more()) {
             lex.throw_parse_error("Unexpected end of input while expecting value");
@@ -4696,6 +4888,7 @@ private:
     }
 
     bool parse_object(lexer& lex) {
+        depth_guard guard(m_depth);
         lex.get(); // consume '{'
         if (!m_handler.start_object()) return false;
 
@@ -4742,6 +4935,7 @@ private:
     }
 
     bool parse_array(lexer& lex) {
+        depth_guard guard(m_depth);
         lex.get(); // consume '['
         if (!m_handler.start_array()) return false;
 

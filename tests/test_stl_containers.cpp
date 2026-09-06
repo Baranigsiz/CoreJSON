@@ -125,5 +125,15 @@ TEST_CASE("STL - std::hash & std::unordered_set / unordered_map") {
     json key1 = json{{"id", 1}};
     json_map[key1] = "User One";
     CHECK_EQ(json_map[key1], "User One");
+
+    // Test that objects with different key orders produce identical hash and find in unordered_set
+    json obj_a = json::object({{"alpha", 1}, {"beta", 2}});
+    json obj_b = json::object({{"beta", 2}, {"alpha", 1}});
+    CHECK(obj_a == obj_b);
+    CHECK_EQ(obj_a.hash(), obj_b.hash());
+    std::unordered_set<json> order_set;
+    order_set.insert(obj_a);
+    CHECK_EQ(order_set.count(obj_b), 1);
 }
+
 

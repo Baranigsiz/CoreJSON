@@ -82,36 +82,54 @@ struct path_segment {
     filter_expr filter;
 };
 
-inline void collect_descendants(const value& current, std::string_view target_key, std::vector<value>& results) {
+template <typename ValueType>
+inline void collect_descendant_refs(ValueType& current, std::string_view target_key, std::vector<ValueType*>& results) {
     if (current.is_object()) {
-        const auto& obj = current.get_ref_object();
-        for (const auto& pair : obj) {
+        auto& obj = current.get_ref_object();
+        for (auto& pair : obj) {
             if (pair.first == target_key) {
-                results.push_back(pair.second);
+                results.push_back(&(pair.second));
             }
-            collect_descendants(pair.second, target_key, results);
+            collect_descendant_refs(pair.second, target_key, results);
         }
     } else if (current.is_array()) {
-        const auto& arr = current.get_ref_array();
-        for (const auto& elem : arr) {
-            collect_descendants(elem, target_key, results);
+        auto& arr = current.get_ref_array();
+        for (auto& elem : arr) {
+            collect_descendant_refs(elem, target_key, results);
         }
     }
 }
 
-inline void collect_all_descendants(const value& current, std::vector<value>& results) {
+template <typename ValueType>
+inline void collect_all_descendant_refs(ValueType& current, std::vector<ValueType*>& results) {
     if (current.is_object()) {
-        const auto& obj = current.get_ref_object();
-        for (const auto& pair : obj) {
-            results.push_back(pair.second);
-            collect_all_descendants(pair.second, results);
+        auto& obj = current.get_ref_object();
+        for (auto& pair : obj) {
+            results.push_back(&(pair.second));
+            collect_all_descendant_refs(pair.second, results);
         }
     } else if (current.is_array()) {
-        const auto& arr = current.get_ref_array();
-        for (const auto& elem : arr) {
-            results.push_back(elem);
-            collect_all_descendants(elem, results);
+        auto& arr = current.get_ref_array();
+        for (auto& elem : arr) {
+            results.push_back(&elem);
+            collect_all_descendant_refs(elem, results);
         }
+    }
+}
+
+inline void collect_descendants(const value& current, std::string_view target_key, std::vector<value>& results) {
+    std::vector<const value*> refs;
+    collect_descendant_refs(current, target_key, refs);
+    for (const auto* r : refs) {
+        if (r) results.push_back(*r);
+    }
+}
+
+inline void collect_all_descendants(const value& current, std::vector<value>& results) {
+    std::vector<const value*> refs;
+    collect_all_descendant_refs(current, refs);
+    for (const auto* r : refs) {
+        if (r) results.push_back(*r);
     }
 }
 
@@ -330,61 +348,52 @@ inline std::vector<path_segment> parse_jsonpath(std::string_view expr) {
     return segments;
 }
 
-} // namespace detail
-
-inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view query);
-
-inline std::vector<value> value::jsonpath(std::string_view query) const {
-    return evaluate_jsonpath(*this, query);
-}
-
-inline value value::jsonpath_first(std::string_view query) const {
-    auto results = evaluate_jsonpath(*this, query);
-    if (results.empty()) return value(nullptr);
-    return results[0];
-}
-
-inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view query) {
-    auto segments = detail::parse_jsonpath(query);
-    std::vector<value> current_set = {root};
+template <typename ValueType>
+inline std::vector<ValueType*> evaluate_jsonpath_refs_impl(ValueType& root, std::string_view query) {
+    auto segments = parse_jsonpath(query);
+    std::vector<ValueType*> current_set = {&root};
 
     for (const auto& seg : segments) {
-        std::vector<value> next_set;
+        std::vector<ValueType*> next_set;
 
-        for (const auto& item : current_set) {
+        for (auto* item : current_set) {
+            if (!item) continue;
             switch (seg.type) {
-                case detail::segment_type::root:
+                case segment_type::root:
                     next_set.push_back(item);
                     break;
-                case detail::segment_type::child_key:
-                    if (item.is_object() && item.contains(seg.key)) {
-                        next_set.push_back(item.at(seg.key));
-                    }
-                    break;
-                case detail::segment_type::child_wildcard:
-                    if (item.is_object()) {
-                        for (const auto& pair : item.get_ref_object()) {
-                            next_set.push_back(pair.second);
-                        }
-                    } else if (item.is_array()) {
-                        for (const auto& elem : item.get_ref_array()) {
-                            next_set.push_back(elem);
+                case segment_type::child_key:
+                    if (item->is_object()) {
+                        auto* p = item->find(seg.key);
+                        if (p) {
+                            next_set.push_back(p);
                         }
                     }
                     break;
-                case detail::segment_type::array_index:
-                    if (item.is_array()) {
+                case segment_type::child_wildcard:
+                    if (item->is_object()) {
+                        for (auto& pair : item->get_ref_object()) {
+                            next_set.push_back(&(pair.second));
+                        }
+                    } else if (item->is_array()) {
+                        for (auto& elem : item->get_ref_array()) {
+                            next_set.push_back(&elem);
+                        }
+                    }
+                    break;
+                case segment_type::array_index:
+                    if (item->is_array()) {
                         int idx = seg.index;
-                        const auto& arr = item.get_ref_array();
+                        auto& arr = item->get_ref_array();
                         if (idx < 0) idx += static_cast<int>(arr.size());
                         if (idx >= 0 && static_cast<size_t>(idx) < arr.size()) {
-                            next_set.push_back(arr[static_cast<size_t>(idx)]);
+                            next_set.push_back(&(arr[static_cast<size_t>(idx)]));
                         }
                     }
                     break;
-                case detail::segment_type::array_slice:
-                    if (item.is_array()) {
-                        const auto& arr = item.get_ref_array();
+                case segment_type::array_slice:
+                    if (item->is_array()) {
+                        auto& arr = item->get_ref_array();
                         int n = static_cast<int>(arr.size());
                         int step = seg.slice.step;
                         if (step == 0) throw jsonpath_error("Step cannot be 0 in array slice");
@@ -401,7 +410,7 @@ inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view 
                                 e = (std::max)(0, (std::min)(n, e));
                             }
                             for (int idx = s; idx < e; idx += step) {
-                                next_set.push_back(arr[static_cast<size_t>(idx)]);
+                                next_set.push_back(&(arr[static_cast<size_t>(idx)]));
                             }
                         } else {
                             // Negative step
@@ -416,26 +425,27 @@ inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view 
                                 e = (std::max)(-1, (std::min)(n - 1, e));
                             }
                             for (int idx = s; idx > e; idx += step) {
-                                next_set.push_back(arr[static_cast<size_t>(idx)]);
+                                next_set.push_back(&(arr[static_cast<size_t>(idx)]));
                             }
                         }
                     }
                     break;
-                case detail::segment_type::descendant_key:
-                    detail::collect_descendants(item, seg.key, next_set);
+                case segment_type::descendant_key:
+                    collect_descendant_refs(*item, seg.key, next_set);
                     break;
-                case detail::segment_type::descendant_wildcard:
-                    detail::collect_all_descendants(item, next_set);
+                case segment_type::descendant_wildcard:
+                    collect_all_descendant_refs(*item, next_set);
                     break;
-                case detail::segment_type::filter:
-                    if (item.is_array()) {
-                        for (const auto& elem : item.get_ref_array()) {
+                case segment_type::filter:
+                    if (item->is_array()) {
+                        auto& arr = item->get_ref_array();
+                        for (auto& elem : arr) {
                             if (seg.filter.evaluate(elem)) {
-                                next_set.push_back(elem);
+                                next_set.push_back(&elem);
                             }
                         }
-                    } else if (item.is_object()) {
-                        if (seg.filter.evaluate(item)) {
+                    } else if (item->is_object()) {
+                        if (seg.filter.evaluate(*item)) {
                             next_set.push_back(item);
                         }
                     }
@@ -448,6 +458,64 @@ inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view 
     }
 
     return current_set;
+}
+
+} // namespace detail
+
+// Zero-copy JSONPath evaluation returning non-owning pointers
+inline std::vector<const value*> evaluate_jsonpath_refs(const value& root, std::string_view query) {
+    return detail::evaluate_jsonpath_refs_impl(root, query);
+}
+
+inline std::vector<value*> evaluate_jsonpath_refs(value& root, std::string_view query) {
+    return detail::evaluate_jsonpath_refs_impl(root, query);
+}
+
+inline const value* evaluate_jsonpath_first_ref(const value& root, std::string_view query) {
+    auto results = evaluate_jsonpath_refs(root, query);
+    return results.empty() ? nullptr : results[0];
+}
+
+inline value* evaluate_jsonpath_first_ref(value& root, std::string_view query) {
+    auto results = evaluate_jsonpath_refs(root, query);
+    return results.empty() ? nullptr : results[0];
+}
+
+// Deep-copy JSONPath evaluation (built on top of zero-copy engine)
+inline std::vector<value> evaluate_jsonpath(const value& root, std::string_view query) {
+    auto refs = evaluate_jsonpath_refs(root, query);
+    std::vector<value> results;
+    results.reserve(refs.size());
+    for (const auto* r : refs) {
+        if (r) results.push_back(*r);
+    }
+    return results;
+}
+
+inline std::vector<value> value::jsonpath(std::string_view query) const {
+    return evaluate_jsonpath(*this, query);
+}
+
+inline value value::jsonpath_first(std::string_view query) const {
+    const auto* r = jsonpath_first_ref(query);
+    if (!r) return value(nullptr);
+    return *r;
+}
+
+inline std::vector<const value*> value::jsonpath_refs(std::string_view query) const {
+    return evaluate_jsonpath_refs(*this, query);
+}
+
+inline std::vector<value*> value::jsonpath_refs(std::string_view query) {
+    return evaluate_jsonpath_refs(*this, query);
+}
+
+inline const value* value::jsonpath_first_ref(std::string_view query) const {
+    return evaluate_jsonpath_first_ref(*this, query);
+}
+
+inline value* value::jsonpath_first_ref(std::string_view query) {
+    return evaluate_jsonpath_first_ref(*this, query);
 }
 
 } // namespace senko

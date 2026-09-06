@@ -14,7 +14,7 @@ namespace senko {
 
 class parser {
 public:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 128;
 
     explicit parser(std::string_view src, bool allow_comments = false, bool allow_trailing_comma = false)
         : m_lexer(src, allow_comments), m_allow_trailing_comma(allow_trailing_comma) {}

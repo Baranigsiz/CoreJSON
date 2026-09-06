@@ -40,6 +40,11 @@ public:
     // ==========================================
 
     value() noexcept : m_data(nullptr) {}
+    value(const value&) = default;
+    value(value&&) noexcept = default;
+    value& operator=(const value&) = default;
+    value& operator=(value&&) noexcept = default;
+
     value(std::nullptr_t) noexcept : m_data(nullptr) {}
     value(bool b) noexcept : m_data(b) {}
 
@@ -611,10 +616,13 @@ public:
                 break;
             }
             case value_t::object: {
+                size_t obj_acc = 0;
                 for (const auto& [k, v] : get_ref_object()) {
-                    h ^= std::hash<std::string>{}(k) + 0x9e3779b9 + (h << 6) + (h >> 2);
-                    h ^= v.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+                    size_t item_h = std::hash<std::string>{}(k);
+                    item_h ^= v.hash() + 0x9e3779b9 + (item_h << 6) + (item_h >> 2);
+                    obj_acc += item_h;
                 }
+                h ^= obj_acc + 0x9e3779b9 + (h << 6) + (h >> 2);
                 break;
             }
         }
@@ -642,6 +650,10 @@ public:
     // JSONPath support declarations
     std::vector<value> jsonpath(std::string_view query) const;
     value jsonpath_first(std::string_view query) const;
+    std::vector<const value*> jsonpath_refs(std::string_view query) const;
+    std::vector<value*> jsonpath_refs(std::string_view query);
+    const value* jsonpath_first_ref(std::string_view query) const;
+    value* jsonpath_first_ref(std::string_view query);
 
     // JSON Patch (RFC 6902) & Diff declarations
     value patch(const value& patch_doc) const;

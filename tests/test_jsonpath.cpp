@@ -156,3 +156,77 @@ TEST_CASE("JSONPath - Recursive Wildcard ($..*)") {
     CHECK(all.size() >= 5);
 }
 
+TEST_CASE("JSONPath - Zero-Copy Pointer Queries (jsonpath_refs & jsonpath_first_ref)") {
+    const json doc = json::parse(R"({
+        "store": {
+            "name": "Senko Bookshop",
+            "city": "Tokyo"
+        },
+        "books": [
+            {"title": "Book A", "price": 10},
+            {"title": "Book B", "price": 20},
+            {"title": "Book C", "price": 30}
+        ]
+    })");
+
+    // jsonpath_refs on const json returns std::vector<const value*>
+    auto book_refs = doc.jsonpath_refs("$.books[*].title");
+    CHECK_EQ(book_refs.size(), 3);
+    CHECK(book_refs[0] != nullptr);
+    CHECK(book_refs[1] != nullptr);
+    CHECK(book_refs[2] != nullptr);
+
+    CHECK_EQ(book_refs[0]->get<std::string>(), "Book A");
+    CHECK_EQ(book_refs[1]->get<std::string>(), "Book B");
+    CHECK_EQ(book_refs[2]->get<std::string>(), "Book C");
+
+    // Pointer address identity: verify it points directly inside the document without copying
+    CHECK_EQ(book_refs[0], &(doc.at("books").at(0).at("title")));
+    CHECK_EQ(book_refs[1], &(doc.at("books").at(1).at("title")));
+    CHECK_EQ(book_refs[2], &(doc.at("books").at(2).at("title")));
+
+    // jsonpath_first_ref
+    const auto* first_ref = doc.jsonpath_first_ref("$.store.name");
+    CHECK(first_ref != nullptr);
+    CHECK_EQ(first_ref->get<std::string>(), "Senko Bookshop");
+    CHECK_EQ(first_ref, &(doc.at("store").at("name")));
+
+    // Non-existent path returns nullptr
+    const auto* null_ref = doc.jsonpath_first_ref("$.store.non_existent");
+    CHECK(null_ref == nullptr);
+}
+
+TEST_CASE("JSONPath - In-Place Mutation via jsonpath_refs & jsonpath_first_ref") {
+    json doc = json::parse(R"({
+        "store": {
+            "name": "Senko Bookshop",
+            "city": "Tokyo"
+        },
+        "products": [
+            {"name": "Mouse", "price": 15.0},
+            {"name": "Pad", "price": 8.0},
+            {"name": "Keyboard", "price": 45.0}
+        ]
+    })");
+
+    // Mutate via jsonpath_first_ref
+    auto* store_name = doc.jsonpath_first_ref("$.store.name");
+    CHECK(store_name != nullptr);
+    if (store_name) *store_name = "Senko Megastore";
+    CHECK_EQ(doc["store"]["name"].get<std::string>(), "Senko Megastore");
+
+    // In-place double price of products with price < 20 via jsonpath_refs
+    auto cheap_products = doc.jsonpath_refs("$.products[?(@.price < 20)].price");
+    CHECK_EQ(cheap_products.size(), 2);
+    for (auto* p_price : cheap_products) {
+        CHECK(p_price != nullptr);
+        if (p_price) *p_price = p_price->get<double>() * 2.0;
+    }
+
+    // Verify changes persisted in the original document
+    CHECK_EQ(doc["products"][0]["price"].get<double>(), 30.0);
+    CHECK_EQ(doc["products"][1]["price"].get<double>(), 16.0);
+    CHECK_EQ(doc["products"][2]["price"].get<double>(), 45.0);
+}
+
+

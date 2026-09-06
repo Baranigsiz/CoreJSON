@@ -12,6 +12,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 
 namespace senko {
 
@@ -54,8 +55,26 @@ inline size_t count_utf8_codepoints(std::string_view s) noexcept {
 class schema {
 public:
     schema() = default;
-
     explicit schema(value schema_doc) : m_schema(std::move(schema_doc)) {}
+
+    schema(const schema& other) : m_schema(other.m_schema) {}
+    schema(schema&& other) noexcept : m_schema(std::move(other.m_schema)) {}
+    schema& operator=(const schema& other) {
+        if (this != &other) {
+            std::lock_guard<std::mutex> lock(m_regex_mutex);
+            m_schema = other.m_schema;
+            m_regex_cache.clear();
+        }
+        return *this;
+    }
+    schema& operator=(schema&& other) noexcept {
+        if (this != &other) {
+            std::lock_guard<std::mutex> lock(m_regex_mutex);
+            m_schema = std::move(other.m_schema);
+            m_regex_cache.clear();
+        }
+        return *this;
+    }
 
     static schema from_json(const value& doc) {
         return schema(doc);
@@ -83,11 +102,13 @@ public:
     }
 
 private:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 64;
     value m_schema;
+    mutable std::mutex m_regex_mutex;
     mutable std::unordered_map<std::string, std::shared_ptr<std::regex>> m_regex_cache;
 
     const std::regex* get_cached_regex(const std::string& pat) const {
+        std::lock_guard<std::mutex> lock(m_regex_mutex);
         auto it = m_regex_cache.find(pat);
         if (it != m_regex_cache.end()) {
             return it->second.get();

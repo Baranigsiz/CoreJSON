@@ -131,7 +131,7 @@ inline void serialize_cbor_impl(const value& v, std::vector<uint8_t>& out) {
 
 class cbor_reader {
 public:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 128;
 
     cbor_reader(const uint8_t* data, size_t size)
         : m_data(data), m_size(size), m_pos(0), m_depth(0) {}

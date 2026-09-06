@@ -185,7 +185,7 @@ inline void serialize_msgpack_impl(const value& v, std::vector<uint8_t>& out) {
 
 class msgpack_reader {
 public:
-    static constexpr size_t max_depth = 512;
+    static constexpr size_t max_depth = 128;
 
     msgpack_reader(const uint8_t* data, size_t size)
         : m_data(data), m_size(size), m_pos(0), m_depth(0) {}

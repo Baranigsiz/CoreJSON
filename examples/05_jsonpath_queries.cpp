@@ -4,7 +4,7 @@
 using json = senko::json;
 
 int main() {
-    std::cout << "=== SenkoJSON v2.1 - JSONPath (RFC 9535) Query Demo ===\n\n";
+    std::cout << "=== SenkoJSON - JSONPath (RFC 9535 & Zero-Copy) Query Demo ===\n\n";
 
     json store = json::parse(R"({
         "store": {
@@ -50,6 +50,26 @@ int main() {
     auto fiction_books = store.jsonpath("$.store.book[?(@.category == 'fiction')].title");
     for (const auto& f : fiction_books) {
         std::cout << "   - " << f.get<std::string>() << "\n";
+    }
+    std::cout << "\n";
+
+    // 5. Zero-Copy Pointer Query (No allocations for subtrees)
+    std::cout << "5. Zero-Copy: '$.store.book[*]' via jsonpath_refs\n";
+    auto book_refs = store.jsonpath_refs("$.store.book[*]");
+    for (const auto* book_ptr : book_refs) {
+        std::cout << "   - " << (*book_ptr)["title"].get<std::string>()
+                  << " ($" << (*book_ptr)["price"].get<double>() << ")\n";
+    }
+    std::cout << "\n";
+
+    // 6. In-Place Mutation via JSONPath
+    std::cout << "6. In-Place Mutation: applying 10% inflation to books < $10.00\n";
+    for (auto* price_node : store.jsonpath_refs("$.store.book[?(@.price < 10.0)].price")) {
+        *price_node = price_node->get<double>() * 1.10;
+    }
+    for (const auto* book_ptr : store.jsonpath_refs("$.store.book[?(@.price < 12.0)]")) {
+        std::cout << "   - Updated: " << (*book_ptr)["title"].get<std::string>()
+                  << " -> $" << (*book_ptr)["price"].get<double>() << "\n";
     }
     std::cout << "\n";
 

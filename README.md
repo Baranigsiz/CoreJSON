@@ -42,18 +42,19 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 - **⚡ Blazing Fast Single-Pass Parser:** Zero-copy token scanning without intermediate heap allocations. Over **1,850,000 parses/sec**.
 - **📦 Single Header & Modular Delivery:** Use either the modular includes (`#include <senko/senko.hpp>`) or drop the single header (`single_include/senko/senko.hpp`) into your project (only ~120 KB).
 - **🌊 Event-Driven Streaming SAX Parser:** Process multi-gigabyte log streams and massive JSON files with zero DOM allocations (`senko::sax_parse`).
-- **🛡️ High-Speed JSON Schema (Draft-07):** Validate JSON payloads at over **120 Million validations/sec** with `doc.validate(schema)` or `senko::schema`.
+- **🛡️ High-Speed JSON Schema (Draft-07):** Validate JSON payloads at over **120 Million validations/sec** with `doc.validate(schema)` or `senko::schema`, featuring thread-safe regex caching.
 - **🔁 Range-Based Iterators & `.items()`:** Native C++ range-based `for` loops on arrays and structured binding `for (auto& [key, val] : doc.items())` on objects.
 - **📁 One-Liner File I/O:** Directly load and save JSON files via `json::parse_file("config.json")` and `doc.dump_file("out.json", 4)`.
 - **🔄 RFC 6902 Patch & RFC 7396 Merge Patch:** Calculate deltas with `json::diff(a, b)`, apply RFC 6902 patches, and merge updates with `doc.merge_patch(patch)`.
 - **📦 Universal Binary JSON (MessagePack & CBOR):** Serialize and deserialize directly to/from binary buffers (`to_msgpack`, `from_msgpack`, `to_cbor`, `from_cbor`) for 20-50% smaller payloads and wire speed.
-- **🔍 RFC 9535 JSONPath Engine:** SQL-like querying with wildcards (`[*]`), recursive descent (`$..key`, `$..*`), array slices (`[0:3]`, `[::2]`), and conditional filters (`[?(@.price < 10)]`).
-- **🎯 RFC 6901 JSON Pointer & Flattening:** Query deep structures with `/store/book/0/author`, `doc.flatten()` and `doc.unflatten()`.
-- **🧬 Struct Reflection & STL Adapters:** Serialize and deserialize structs with up to 32 fields (`SENKO_BIND`), `std::optional`, `std::map`, `std::vector`, `std::pair`, `std::unordered_set<json>` out-of-the-box.
-- **⚡ SIMD Accelerated Scanning:** Hardware-accelerated 16-byte SSE2/AVX2 vector chunk scanning for lightning-fast plain string and whitespace parsing.
+- **🔍 RFC 9535 JSONPath Engine:** SQL-like querying with wildcards (`[*]`), recursive descent (`$..key`, `$..*`), array slices (`[0:3]`, `[::2]`), and conditional filters (`[?(@.price < 10)]`). Supports **Zero-Copy querying** (`jsonpath_refs`) and **in-place DOM mutation** via non-owning pointers (`value*`).
+- **🎯 RFC 6901 JSON Pointer & Flattening:** Query deep structures with `/store/book/0/author`, `doc.flatten()` and `doc.unflatten()` with bound protection.
+- **🧬 Struct Reflection & STL Adapters:** Serialize and deserialize structs with up to 32 fields (`SENKO_BIND`, `SENKO_BIND_INTRUSIVE`), `std::optional`, `std::map`, `std::vector`, `std::pair`, and order-independent `std::unordered_set<json>` out-of-the-box.
+- **⚡ SIMD Accelerated Scanning:** Hardware-accelerated 16-byte vector chunk scanning with SSE2 on x86/x64 and **NEON on ARM64** (Apple Silicon, AWS Graviton, Raspberry Pi, Android, Windows on ARM) for lightning-fast string parsing.
 - **🛠️ First-Class JSONC Engine:** Native support for C/C++ style comments (`//`, `/* */`) and trailing commas via `senko::jsonc::parse("config.jsonc")` and `""_jsonc`.
 - **🌊 NDJSON / JSON Lines (JSONL) Stream:** Zero-allocation line-by-line streaming engine (`senko::jsonl_reader`) tailored for Big Data, logs, and AI/LLM datasets.
 - **🎨 Rich Compiler-Grade Diagnostics:** Rust/Clang-style visual error snippets with exact line boxes and `~~~^~~~` underline pointers for effortless debugging.
+- **🛡️ Stack Overflow & DoS Hardening:** Multi-layered recursion depth limits and bounds guards across Parser, Schema, Serializer, SAX, CBOR, and MessagePack.
 - **🧠 Memory-Efficient DOM:** Powered by compact `std::variant` tagged unions—no bloated node structures.
 - **🌐 Full UTF-8 & Surrogate Pairs:** Strict RFC 8259 compliance with UTF-16 surrogate pairs (`\uD83D\uDE00` -> 😀).
 - **🛡️ Rock-Solid Reliability:** 100% test coverage across multiple platforms and compilers (GCC, Clang, MSVC).
@@ -73,7 +74,7 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 | **Iterators & Views** | `begin()`, `end()`, `items()` (Structured Binding) | `for (auto& [k, v] : j.items()) { ... }` |
 | **Modifiers** | `push_back()`, `contains()`, `erase()`, `clear()`, `size()`, `empty()` | `j.push_back(42);`, `if (j.contains("key")) { ... }` |
 | **JSON Pointer (RFC 6901)** | `at_ptr()`, `operator[]`, `value_or(ptr, default)`, `flatten()`, `unflatten()` | `j["/user/name"_json_pointer]`, `json flat = j.flatten();` |
-| **JSONPath (RFC 9535)** | `jsonpath(query)`, `jsonpath_first(query)` | `auto res = j.jsonpath("$.store.books[0:3].title");` |
+| **JSONPath (RFC 9535)** | `jsonpath()`, `jsonpath_refs()`, `jsonpath_first_ref()` | `auto res = j.jsonpath_refs("$.store.books[*]");` |
 | **JSON Patch (RFC 6902)** | `patch()`, `patch_in_place()`, `json::diff(src, tgt)` | `json patch = json::diff(a, b); a.patch_in_place(patch);` |
 | **JSON Merge Patch (RFC 7396)** | `merge_patch()`, `merge_patch_in_place()` | `j.merge_patch_in_place(delta_patch);` |
 | **JSON Schema (Draft-07)** | `validate(schema, &err)`, `senko::schema` | `if (j.validate(schema, &err)) { ... }` |
@@ -103,12 +104,12 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 | :--- | :---: | :---: | :---: |
 | **Single-Header File Size** | 🏆 **~125 KB** (Compact & Lean) | 🐌 **~2.8 MB** (32,000 lines) | ~1.1 MB |
 | **Clean Build Compile Time** | ⚡ **~0.5 - 1.2s** (Ultra-Fast) | 🐢 **8 - 25s** (Heavy Template Bloat) | ~1.5s |
-| **Hardware SIMD Acceleration** | ⚡ **Built-in (SSE2 / AVX2)** | ❌ No | ⚠️ Minimal SSE2 |
+| **Hardware SIMD Acceleration** | ⚡ **Built-in (SSE2 on x86, NEON on ARM64)** | ❌ No | ⚠️ Minimal SSE2 |
 | **Parse Throughput (Small JSON)** | ⚡ **~1.72M - 1.88M ops/s** | ~1.10M ops/s | ~1.95M ops/s |
 | **JSONC Engine (Comments & Commas)** | ✅ **Built-in (`senko::jsonc` & `""_jsonc`)** | ⚠️ Partial (flags) | ❌ No |
 | **JSONL / NDJSON Stream Reader** | ✅ **Built-in (`senko::jsonl_reader`)** | ❌ No | ❌ No |
 | **Compiler-Grade Error Diagnostics** | ✅ **Built-in (Rust/Clang-style visual box)** | ❌ Basic | ❌ Basic |
-| **JSONPath Engine (RFC 9535)** | ✅ **Built-in** | ❌ No | ❌ No |
+| **JSONPath Engine (RFC 9535)** | ✅ **Built-in (Zero-Copy & In-Place Mutation)** | ❌ No | ❌ No |
 | **JSON Schema Validator (Draft-07)** | ✅ **Built-in (~150M ops/s)** | ❌ External plugin required | ✅ Built-in |
 | **Streaming Event SAX Parser** | ✅ **Built-in (`sax_parse`)** | ⚠️ Complex | ✅ Built-in |
 | **JSON Merge Patch (RFC 7396)** | ✅ **Built-in** | ✅ Built-in | ❌ No |
@@ -221,6 +222,17 @@ auto authors = store.jsonpath("$..author");
 
 // 4. Conditional Filter: find books cheaper than $10
 auto cheap_books = store.jsonpath("$.store.book[?(@.price < 10.0)].title");
+
+// 5. Zero-Copy Pointer Query (No memory allocations for subtrees!)
+std::vector<const senko::value*> book_refs = store.jsonpath_refs("$.store.book[*]");
+for (const auto* book : book_refs) {
+    std::cout << (*book)["title"].get<std::string>() << "\n";
+}
+
+// 6. In-Place Mutation via JSONPath (Update original document in-place)
+for (auto* price_node : store.jsonpath_refs("$.store.book[?(@.price < 10.0)].price")) {
+    *price_node = price_node->get<double>() * 1.10; // 10% discount adjustment
+}
 ```
 
 ---
@@ -500,9 +512,13 @@ int main() {
     UserConfig user{"Baran", std::nullopt, {"cpp", "fast"}, {{"level", 99}}};
     senko::json j = user; // Automatically serialized!
 
-    // std::hash support (use json as keys in hash sets/maps)
+    // std::hash support: fully consistent with operator== (order-independent)
     std::unordered_set<senko::json> unique_records;
-    unique_records.insert(j);
+    unique_records.insert(senko::json::object({{"a", 1}, {"b", 2}}));
+
+    // Will match even with different key insertion order:
+    bool found = unique_records.count(senko::json::object({{"b", 2}, {"a", 1}})) == 1; // true!
+    (void)found;
 
     return 0;
 }
@@ -536,7 +552,7 @@ include(FetchContent)
 FetchContent_Declare(
     SenkoJSON
     GIT_REPOSITORY https://github.com/Baranigsiz/SenkoJSON.git
-    GIT_TAG        v2.4.0
+    GIT_TAG        v2.6.0
 )
 FetchContent_MakeAvailable(SenkoJSON)
 
@@ -565,7 +581,7 @@ Add to your `conanfile.txt` or `conanfile.py`:
 
 ```text
 [requires]
-senkojson/2.4.0
+senkojson/2.6.0
 ```
 
 ---
@@ -588,6 +604,8 @@ SenkoJSON/
 │   ├── patch.hpp                  # RFC 6902 Patch/Diff & RFC 7396 Merge Patch
 │   ├── schema.hpp                 # JSON Schema Draft-07 validator
 │   ├── sax.hpp                    # Event-driven streaming SAX parser
+│   ├── jsonc.hpp                  # JSON with comments & trailing comma engine
+│   ├── jsonl.hpp                  # JSON Lines / NDJSON streaming engine
 │   ├── binary/
 │   │   ├── msgpack.hpp            # MessagePack binary encoder/decoder
 │   │   └── cbor.hpp               # CBOR (RFC 8949) binary encoder/decoder
@@ -595,8 +613,8 @@ SenkoJSON/
 │   └── senko.hpp                  # Master header
 ├── single_include/senko/          # Standalone single-header distribution (~120 KB)
 │   └── senko.hpp
-├── examples/                      # Interactive code examples (01 - 09)
-├── tests/                         # Comprehensive unit test suite (45 test cases)
+├── examples/                      # Interactive code examples (01 - 11)
+├── tests/                         # Comprehensive unit test suite (54 test cases, 384+ assertions)
 ├── benchmarks/                    # Latency & throughput benchmark suite
 ├── scripts/amalgamate.py          # Header amalgamation script
 ├── CMakeLists.txt                 # Modern CMake build system

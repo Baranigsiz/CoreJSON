@@ -192,9 +192,9 @@ TEST_CASE("JSON Schema - Regex Caching and Array Pattern") {
 }
 
 TEST_CASE("JSON Schema - Nesting Depth Recursion Guard") {
-    // Build a deeply nested schema: allOf -> allOf -> allOf ... (600 levels)
+    // Build a deeply nested schema: allOf -> allOf -> allOf ... (80 levels > max_depth 64)
     json deep_sch = json::object({{"type", "integer"}});
-    for (int i = 0; i < 600; ++i) {
+    for (int i = 0; i < 80; ++i) {
         deep_sch = json::object({{"allOf", json::array({std::move(deep_sch)})}});
     }
 

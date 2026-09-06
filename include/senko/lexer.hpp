@@ -19,6 +19,12 @@
     #if defined(_MSC_VER)
         #include <intrin.h>
     #endif
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(_M_ARM64) || defined(_M_ARM)
+    #define SENKO_HAS_NEON 1
+    #include <arm_neon.h>
+    #if defined(_MSC_VER)
+        #include <intrin.h>
+    #endif
 #endif
 
 namespace senko {
@@ -69,6 +75,61 @@ inline size_t find_non_plain_sse2(const char* ptr, size_t len) noexcept {
             return i + static_cast<size_t>(__builtin_ctz(mask));
 #endif
         }
+    }
+    return i;
+}
+#endif
+#if defined(SENKO_HAS_NEON)
+inline size_t find_non_plain_neon(const char* ptr, size_t len) noexcept {
+    size_t i = 0;
+    const uint8x16_t quote_vec = vdupq_n_u8(static_cast<uint8_t>('"'));
+    const uint8x16_t bslash_vec = vdupq_n_u8(static_cast<uint8_t>('\\'));
+    const uint8x16_t space_vec = vdupq_n_u8(0x20);
+
+    for (; i + 16 <= len; i += 16) {
+        uint8x16_t chunk = vld1q_u8(reinterpret_cast<const uint8_t*>(ptr + i));
+        uint8x16_t is_quote = vceqq_u8(chunk, quote_vec);
+        uint8x16_t is_bslash = vceqq_u8(chunk, bslash_vec);
+        uint8x16_t is_ctrl = vcltq_u8(chunk, space_vec); // char < 0x20
+
+        uint8x16_t matches = vorrq_u8(vorrq_u8(is_quote, is_bslash), is_ctrl);
+
+#if (defined(__aarch64__) || defined(_M_ARM64)) && (!defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__)
+        if (vmaxvq_u8(matches) != 0) {
+            uint64_t low = vgetq_lane_u64(vreinterpretq_u64_u8(matches), 0);
+            if (low != 0) {
+#if defined(_MSC_VER) && !defined(__clang__)
+                unsigned long idx;
+                _BitScanForward64(&idx, low);
+                return i + (idx >> 3);
+#else
+                return i + (static_cast<size_t>(__builtin_ctzll(low)) >> 3);
+#endif
+            }
+            uint64_t high = vgetq_lane_u64(vreinterpretq_u64_u8(matches), 1);
+            if (high != 0) {
+#if defined(_MSC_VER) && !defined(__clang__)
+                unsigned long idx;
+                _BitScanForward64(&idx, high);
+                return i + 8 + (idx >> 3);
+#else
+                return i + 8 + (static_cast<size_t>(__builtin_ctzll(high)) >> 3);
+#endif
+            }
+        }
+#else
+        uint8x8_t narrow = vpmax_u8(vget_low_u8(matches), vget_high_u8(matches));
+        narrow = vpmax_u8(narrow, narrow);
+        narrow = vpmax_u8(narrow, narrow);
+        if (vget_lane_u8(narrow, 0) != 0) {
+            for (size_t k = 0; k < 16; ++k) {
+                unsigned char c = static_cast<unsigned char>(ptr[i + k]);
+                if (c == '"' || c == '\\' || c < 0x20) {
+                    return i + k;
+                }
+            }
+        }
+#endif
     }
     return i;
 }
@@ -231,6 +292,15 @@ public:
 #if defined(SENKO_HAS_SSE2)
             if (m_pos + 16 <= m_src.size()) {
                 size_t advanced = detail::find_non_plain_sse2(m_src.data() + m_pos, m_src.size() - m_pos);
+                if (advanced > 0) {
+                    m_pos += advanced;
+                    m_col += advanced;
+                    if (m_pos >= m_src.size()) break;
+                }
+            }
+#elif defined(SENKO_HAS_NEON)
+            if (m_pos + 16 <= m_src.size()) {
+                size_t advanced = detail::find_non_plain_neon(m_src.data() + m_pos, m_src.size() - m_pos);
                 if (advanced > 0) {
                     m_pos += advanced;
                     m_col += advanced;

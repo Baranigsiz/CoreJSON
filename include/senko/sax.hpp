@@ -38,12 +38,15 @@ struct default_sax_handler {
 template <typename Handler>
 class sax_parser {
 public:
+    static constexpr size_t max_depth = 128;
+
     explicit sax_parser(Handler& handler, bool allow_comments = false, bool allow_trailing_comma = false)
-        : m_handler(handler), m_allow_comments(allow_comments), m_allow_trailing_comma(allow_trailing_comma) {}
+        : m_handler(handler), m_allow_comments(allow_comments), m_allow_trailing_comma(allow_trailing_comma), m_depth(0) {}
 
     bool parse(std::string_view source) {
         lexer lex(source, m_allow_comments);
         try {
+            m_depth = 0;
             if (!parse_value(lex)) return false;
             lex.skip_whitespace_and_comments();
             if (lex.has_more()) {
@@ -60,8 +63,18 @@ private:
     Handler& m_handler;
     bool m_allow_comments;
     bool m_allow_trailing_comma;
+    size_t m_depth = 0;
+
+    struct depth_guard {
+        size_t& d;
+        explicit depth_guard(size_t& depth) : d(depth) { d++; }
+        ~depth_guard() { d--; }
+    };
 
     bool parse_value(lexer& lex) {
+        if (m_depth > max_depth) {
+            lex.throw_parse_error("Maximum JSON nesting depth exceeded in SAX parser");
+        }
         lex.skip_whitespace_and_comments();
         if (!lex.has_more()) {
             lex.throw_parse_error("Unexpected end of input while expecting value");
@@ -102,6 +115,7 @@ private:
     }
 
     bool parse_object(lexer& lex) {
+        depth_guard guard(m_depth);
         lex.get(); // consume '{'
         if (!m_handler.start_object()) return false;
 
@@ -148,6 +162,7 @@ private:
     }
 
     bool parse_array(lexer& lex) {
+        depth_guard guard(m_depth);
         lex.get(); // consume '['
         if (!m_handler.start_array()) return false;
 

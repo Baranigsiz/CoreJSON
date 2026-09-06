@@ -94,6 +94,7 @@ if(SENKO_BUILD_TESTS)
         tests/test_schema.cpp
         tests/test_sax.cpp
         tests/test_jsonc_jsonl.cpp
+        tests/test_fuzz_robustness.cpp
     )
     target_link_libraries(senko_tests PRIVATE senko::senko)
     target_include_directories(senko_tests PRIVATE tests)

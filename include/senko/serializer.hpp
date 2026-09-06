@@ -91,10 +91,15 @@ struct stream_writer {
 template <typename Writer>
 class basic_serializer {
 public:
+    static constexpr size_t max_depth = 128;
+
     explicit basic_serializer(Writer& out, int indent = -1)
         : m_out(out), m_indent(indent), m_depth(0) {}
 
     void dump(const value& v) {
+        if (static_cast<size_t>(m_depth) > max_depth) {
+            throw serializer_error("Maximum JSON serialization depth exceeded (potential stack overflow)");
+        }
         switch (v.type()) {
             case value_t::null:
                 m_out.append("null", 4);

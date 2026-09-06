@@ -262,7 +262,10 @@ inline value value::unflatten() const {
                     cur = &(*cur)[tok];
                 }
             } else if (cur->is_array()) {
-                size_t idx = std::stoull(tok);
+                size_t idx = json_pointer::parse_array_index(tok);
+                if (idx > 100000) {
+                    throw pointer_error("Array index in unflatten exceeds maximum allowed limit: " + tok);
+                }
                 if (idx >= cur->size()) {
                     while (cur->size() <= idx) {
                         cur->push_back(value(nullptr));

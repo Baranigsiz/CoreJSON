@@ -110,5 +110,13 @@ TEST_CASE("JSON Pointer - Flatten and Unflatten") {
     // 2. Unflatten (Roundtrip)
     json restored = flat.unflatten();
     CHECK_EQ(restored, original);
+
+    // 3. Unflatten with invalid array indices should throw pointer_error safely
+    json bad_flat1 = json::object({{"/0", "valid"}, {"/invalid_token", "fail"}});
+    CHECK_THROWS(bad_flat1.unflatten());
+
+    json bad_flat2 = json::object({{"/0", "valid"}, {"/999999", "too_large"}});
+    CHECK_THROWS(bad_flat2.unflatten());
 }
+
 
