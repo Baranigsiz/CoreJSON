@@ -16,6 +16,7 @@
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-jsonc-configuration-engine">JSONC</a> •
   <a href="#-ndjson--json-lines-jsonl-streaming">JSONL</a> •
+  <a href="#-streaming-json-writer--terminal-syntax-highlighting">Streaming Writer & Colors</a> •
   <a href="#-binary-json-msgpack--cbor">Binary JSON</a> •
   <a href="#-jsonpath-rfc-9535">JSONPath</a> •
   <a href="#-json-schema-validation-draft-07">JSON Schema</a> •
@@ -53,6 +54,8 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 - **⚡ SIMD Accelerated Scanning:** Hardware-accelerated 16-byte vector chunk scanning with SSE2 on x86/x64 and **NEON on ARM64** (Apple Silicon, AWS Graviton, Raspberry Pi, Android, Windows on ARM) for lightning-fast string parsing.
 - **🛠️ First-Class JSONC Engine:** Native support for C/C++ style comments (`//`, `/* */`) and trailing commas via `senko::jsonc::parse("config.jsonc")` and `""_jsonc`.
 - **🌊 NDJSON / JSON Lines (JSONL) Stream:** Zero-allocation line-by-line streaming engine (`senko::jsonl_reader`) tailored for Big Data, logs, and AI/LLM datasets.
+- **✍️ Zero-Allocation Streaming JSON Writer:** Generate massive JSON payloads with zero intermediate DOM allocations via fluent chaining API (`senko::json_writer`).
+- **🎨 Terminal Syntax Highlighting:** Output colored JSON directly to console or logs with standard ANSI color tokens (`doc.dump_colored(2)`).
 - **🎨 Rich Compiler-Grade Diagnostics:** Rust/Clang-style visual error snippets with exact line boxes and `~~~^~~~` underline pointers for effortless debugging.
 - **🛡️ Stack Overflow & DoS Hardening:** Multi-layered recursion depth limits and bounds guards across Parser, Schema, Serializer, SAX, CBOR, and MessagePack.
 - **🧠 Memory-Efficient DOM:** Powered by compact `std::variant` tagged unions—no bloated node structures.
@@ -68,7 +71,8 @@ Whether you're developing game engines, low-latency microservices, hardware conf
 | **Parsing & File I/O** | `json::parse()`, `json::parse_file()`, `""_json` | `json j = json::parse(str);`, `json j = "{\"a\":1}"_json;` |
 | **JSONC (Configs with Comments)** | `jsonc::parse()`, `jsonc::parse_file()`, `""_jsonc` | `json j = senko::jsonc::parse_file("config.jsonc");` |
 | **JSONL / NDJSON Streaming** | `jsonl_reader`, `jsonl::from_file()` | `for (auto doc : senko::jsonl::from_file("data.jsonl")) { ... }` |
-| **Dumping & Output** | `dump(indent)`, `dump(os, indent)`, `dump_file(path, indent)`, `operator<<` | `j.dump(std::cout, 2);`, `std::string s = j.dump(4);` |
+| **Streaming JSON Writer** | `json_writer` (fluent chaining) | `senko::json_writer w; w.start_object().key("k").value(42).end_object();` |
+| **Dumping & Terminal Output** | `dump(indent)`, `dump(os, indent)`, `dump_colored(indent)`, `dump_file(path, indent)`, `operator<<` | `j.dump(std::cout, 2);`, `std::cout << j.dump_colored(2);` |
 | **Type Inspection** | `is_null()`, `is_boolean()`, `is_number()`, `is_string()`, `is_array()`, `is_object()` | `if (j["age"].is_number()) { ... }` |
 | **Element Access** | `operator[]`, `at()`, `find()`, `get<T>()`, `value_or(key, default)` | `int x = j["count"].get<int>();`, `std::string s = j.value_or("k", "fallback");` |
 | **Iterators & Views** | `begin()`, `end()`, `items()` (Structured Binding) | `for (auto& [k, v] : j.items()) { ... }` |
@@ -490,6 +494,54 @@ int main() {
 
 ---
 
+## ✍️ Streaming JSON Writer & Terminal Syntax Highlighting
+
+### 1. High-Performance Streaming Writer (`senko::json_writer`)
+Emit massive or continuous JSON payloads directly to `std::string`, `std::ostream`, or stdout with **zero intermediate DOM tree allocations** and automatic scope/syntax validation:
+
+```cpp
+#include <iostream>
+#include <senko/senko.hpp>
+
+int main() {
+    senko::json_writer writer(2); // Indent 2 spaces (or -1 for compact minified)
+    writer.start_object()
+          .key("service").value("SenkoEngine")
+          .key("uptime_seconds").value(86400)
+          .key("active").value(true)
+          .key("nodes").start_array()
+              .value("node-us-east")
+              .value("node-eu-west")
+          .end_array()
+          .key("embedded_subdoc").value(senko::json{{"nested", 42}})
+          .key("notes").null_value()
+          .end_object();
+
+    std::cout << writer.str() << "\n";
+    return 0;
+}
+```
+
+### 2. ANSI Syntax-Highlighted Terminal Output (`doc.dump_colored()`)
+Bring modern developer experience to terminal apps and microservice loggers with instant colorized JSON:
+
+```cpp
+senko::json doc = {
+    {"name", "Senko"},
+    {"version", 2},
+    {"status", "online"},
+    {"ready", true}
+};
+
+// Pretty-print to terminal with ANSI colors:
+std::cout << doc.dump_colored(2) << "\n";
+
+// Or stream directly to std::ostream:
+doc.dump_colored(std::cout, 2);
+```
+
+---
+
 ## 📦 Extended STL Types & Hash Support
 
 Out-of-the-box support for `std::optional`, `std::map`, `std::unordered_map`, `std::vector`, `std::pair`, `std::set`, and `std::unordered_set<senko::json>`:
@@ -598,7 +650,8 @@ SenkoJSON/
 │   ├── stl_adapters.hpp           # STL containers & std::optional adapters
 │   ├── lexer.hpp                  # Fast zero-copy token scanner
 │   ├── parser.hpp                 # Single-pass streaming recursive descent parser
-│   ├── serializer.hpp             # High-speed direct stringifier
+│   ├── serializer.hpp             # High-speed direct stringifier & colored printer
+│   ├── writer.hpp                 # Zero-allocation streaming JSON writer
 │   ├── json_pointer.hpp           # RFC 6901 Pointer, flatten & unflatten
 │   ├── jsonpath.hpp               # RFC 9535 JSONPath query engine
 │   ├── patch.hpp                  # RFC 6902 Patch/Diff & RFC 7396 Merge Patch
@@ -613,8 +666,8 @@ SenkoJSON/
 │   └── senko.hpp                  # Master header
 ├── single_include/senko/          # Standalone single-header distribution (~120 KB)
 │   └── senko.hpp
-├── examples/                      # Interactive code examples (01 - 11)
-├── tests/                         # Comprehensive unit test suite (54 test cases, 384+ assertions)
+├── examples/                      # Interactive code examples (01 - 12)
+├── tests/                         # Comprehensive unit test suite (70 test cases, 453 checks, 100% pass rate)
 ├── benchmarks/                    # Latency & throughput benchmark suite
 ├── scripts/amalgamate.py          # Header amalgamation script
 ├── CMakeLists.txt                 # Modern CMake build system

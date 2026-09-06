@@ -594,6 +594,8 @@ public:
     std::string dump(int indent = -1) const;
     void dump(std::ostream& os, int indent = -1) const;
     void dump_file(const std::string& filepath, int indent = -1) const;
+    std::string dump_colored(int indent = 2) const;
+    void dump_colored(std::ostream& os, int indent = 2) const;
 
     static value parse(std::string_view input, bool allow_comments = false, bool allow_trailing_comma = false);
     static value parse(std::istream& is, bool allow_comments = false, bool allow_trailing_comma = false);

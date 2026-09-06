@@ -69,6 +69,9 @@ if(SENKO_BUILD_EXAMPLES)
 
     add_executable(example_11_jsonl_streaming examples/11_jsonl_streaming.cpp)
     target_link_libraries(example_11_jsonl_streaming PRIVATE senko::senko)
+
+    add_executable(example_12_streaming_writer_and_colored examples/12_streaming_writer_and_colored.cpp)
+    target_link_libraries(example_12_streaming_writer_and_colored PRIVATE senko::senko)
 endif()
 
 # ==============================================================================
@@ -95,6 +98,7 @@ if(SENKO_BUILD_TESTS)
         tests/test_sax.cpp
         tests/test_jsonc_jsonl.cpp
         tests/test_fuzz_robustness.cpp
+        tests/test_writer.cpp
     )
     target_link_libraries(senko_tests PRIVATE senko::senko)
     target_include_directories(senko_tests PRIVATE tests)

@@ -28,6 +28,7 @@
 #include "sax.hpp"
 #include "jsonc.hpp"
 #include "jsonl.hpp"
+#include "writer.hpp"
 
 namespace senko {
 
